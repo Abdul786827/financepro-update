@@ -25,6 +25,7 @@ import com.example.data.model.TransactionEntity
 import com.example.ui.components.AddTransactionDialog
 import com.example.ui.components.SavingsEntryDialog
 import com.example.ui.components.ScrollableFinanceBottomBar
+import com.example.ui.components.buildFinanceBottomNavItems
 import com.example.ui.navigation.AppScreen
 import com.example.ui.screens.*
 import com.example.ui.theme.MyApplicationTheme
@@ -60,8 +61,15 @@ class MainActivity : FragmentActivity() {
 
                 // Session lock: Persisted across configuration changes and picker launches
                 var isSessionUnlocked by rememberSaveable { mutableStateOf(false) }
+                var isTaxUnlocked by rememberSaveable { mutableStateOf(false) }
                 var lastBackgroundTime by rememberSaveable { mutableLongStateOf(0L) }
                 val lifecycleOwner = LocalLifecycleOwner.current
+
+                LaunchedEffect(isLoggedIn, isSessionUnlocked) {
+                    if (!isLoggedIn || !isSessionUnlocked) {
+                        isTaxUnlocked = false
+                    }
+                }
 
                 // Function to prompt biometric unlock automatically
                 val promptBiometricAutoUnlock = {
@@ -95,6 +103,7 @@ class MainActivity : FragmentActivity() {
                             Lifecycle.Event.ON_STOP -> {
                                 if (!viewModel.isExternalPickerActive.value) {
                                     lastBackgroundTime = System.currentTimeMillis()
+                                    isTaxUnlocked = false
                                 }
                             }
                             Lifecycle.Event.ON_START -> {
@@ -105,6 +114,7 @@ class MainActivity : FragmentActivity() {
                                     val elapsed = System.currentTimeMillis() - lastBackgroundTime
                                     if (elapsed >= 60_000L) {
                                         isSessionUnlocked = false
+                                        isTaxUnlocked = false
                                         // Prompt biometric immediately upon return
                                         promptBiometricAutoUnlock()
                                     }
@@ -242,6 +252,7 @@ class MainActivity : FragmentActivity() {
                             if (currentScreen != AppScreen.ADD_TRANSACTION) {
                                 ScrollableFinanceBottomBar(
                                     currentScreen = currentScreen,
+                                    items = buildFinanceBottomNavItems(showTax = userProfile?.isTaxpayerEnabled == true),
                                     onSelectScreen = { currentScreen = it }
                                 )
                             }
@@ -370,6 +381,17 @@ class MainActivity : FragmentActivity() {
 
                                 AppScreen.SAVINGS -> SavingsScreen(
                                     viewModel = viewModel
+                                )
+
+                                AppScreen.TAX -> TaxScreen(
+                                    viewModel = viewModel,
+                                    isTaxUnlocked = isTaxUnlocked,
+                                    onUnlockTax = { isTaxUnlocked = true },
+                                    onEditLinkedTransaction = { tx ->
+                                        transactionToEdit = tx
+                                        dialogInitialType = tx.type
+                                        currentScreen = AppScreen.ADD_TRANSACTION
+                                    }
                                 )
 
                                 AppScreen.REPORTS -> ReportsExportScreen(

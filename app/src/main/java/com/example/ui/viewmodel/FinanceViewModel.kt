@@ -3,12 +3,17 @@ package com.example.ui.viewmodel
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import android.net.Uri
 import com.example.data.local.FinanceDatabase
 import com.example.data.model.*
 import com.example.data.repository.FinanceRepository
+import com.example.data.repository.TaxRepository
 import com.example.util.AppUpdateChecker
 import com.example.util.DateUtils
+import com.example.util.PakistanTaxYearUtils
 import com.example.util.SecurityUtils
+import com.example.util.TaxCryptoHelper
+import com.example.util.TaxReminderHelper
 import com.example.util.UpdateCheckResult
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -16,11 +21,13 @@ import kotlinx.coroutines.launch
 class FinanceViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository: FinanceRepository
+    private val taxRepository: TaxRepository
     val isExternalPickerActive = MutableStateFlow(false)
 
     init {
         val database = FinanceDatabase.getDatabase(application)
         repository = FinanceRepository(database.financeDao(), database)
+        taxRepository = TaxRepository(database.financeDao(), database.taxDao(), database)
         viewModelScope.launch {
             repository.initializeIfEmpty()
         }
@@ -141,6 +148,51 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         list.sumOf { it.savedAmount }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
 
+    // --- PAKISTAN TAXPAYER MODE STATEFLOWS ---
+    val taxProfile = taxRepository.taxProfile.stateIn(
+        viewModelScope,
+        SharingStarted.WhileSubscribed(5000),
+        null
+    )
+
+    val taxYears = taxRepository.taxYears.stateIn(
+        viewModelScope,
+        SharingStarted.WhileSubscribed(5000),
+        emptyList()
+    )
+
+    val taxEntries = taxRepository.taxEntries.stateIn(
+        viewModelScope,
+        SharingStarted.WhileSubscribed(5000),
+        emptyList()
+    )
+
+    val taxWealthItems = taxRepository.taxWealthItems.stateIn(
+        viewModelScope,
+        SharingStarted.WhileSubscribed(5000),
+        emptyList()
+    )
+
+    val taxDocuments = taxRepository.taxDocuments.stateIn(
+        viewModelScope,
+        SharingStarted.WhileSubscribed(5000),
+        emptyList()
+    )
+
+    val taxCustomCategories = taxRepository.taxCustomCategories.stateIn(
+        viewModelScope,
+        SharingStarted.WhileSubscribed(5000),
+        emptyList()
+    )
+
+    val taxYearCount = taxRepository.taxYearCount.stateIn(
+        viewModelScope,
+        SharingStarted.WhileSubscribed(5000),
+        0
+    )
+
+    val selectedTaxYear = MutableStateFlow(PakistanTaxYearUtils.currentTaxYear())
+
     // Filter states
     val searchQuery = MutableStateFlow("")
     val selectedAccountFilter = MutableStateFlow<String?>(null)
@@ -214,6 +266,10 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         extraItem: String = "",
         petrolLiters: Double = 0.0,
         petrolRate: Double = 0.0,
+        isTaxRelated: Boolean = false,
+        taxSectionType: String = "",
+        taxCategory: String = "",
+        taxYearId: String = "",
         onComplete: () -> Unit = {}
     ) {
         viewModelScope.launch {
@@ -229,7 +285,11 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 description = description,
                 extraItem = extraItem,
                 petrolLiters = petrolLiters,
-                petrolRate = petrolRate
+                petrolRate = petrolRate,
+                isTaxRelated = isTaxRelated,
+                taxSectionType = taxSectionType,
+                taxCategory = taxCategory,
+                taxYearId = taxYearId
             )
             onComplete()
         }
@@ -258,6 +318,10 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         extraItem: String = "",
         petrolLiters: Double = 0.0,
         petrolRate: Double = 0.0,
+        isTaxRelated: Boolean = oldTx.isTaxRelated,
+        taxSectionType: String = oldTx.taxSectionType,
+        taxCategory: String = oldTx.taxCategory,
+        taxYearId: String = oldTx.taxYearId,
         onComplete: () -> Unit = {}
     ) {
         viewModelScope.launch {
@@ -273,7 +337,31 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 newComments = comments,
                 newExtraItem = extraItem,
                 newPetrolLiters = petrolLiters,
-                newPetrolRate = petrolRate
+                newPetrolRate = petrolRate,
+                isTaxRelated = isTaxRelated,
+                taxSectionType = taxSectionType,
+                taxCategory = taxCategory,
+                taxYearId = taxYearId
+            )
+            onComplete()
+        }
+    }
+
+    fun bulkTagTransactionsForTax(
+        ids: List<Long>,
+        isTaxRelated: Boolean,
+        taxSectionType: String,
+        taxCategory: String,
+        taxYearId: String,
+        onComplete: () -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            repository.bulkTagTransactionsForTax(
+                ids = ids,
+                isTaxRelated = isTaxRelated,
+                taxSectionType = taxSectionType,
+                taxCategory = taxCategory,
+                taxYearId = taxYearId
             )
             onComplete()
         }
@@ -417,9 +505,37 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun resetAllDataToZero(deleteAccounts: Boolean = false, onComplete: () -> Unit = {}) {
+    fun setTaxpayerEnabled(enabled: Boolean) {
         viewModelScope.launch {
-            repository.resetAllDataToZero(deleteAccounts = deleteAccounts)
+            repository.setTaxpayerEnabled(enabled)
+            if (enabled) {
+                val curYear = selectedTaxYear.value
+                val yearObj = taxRepository.ensureTaxYearExists(curYear)
+                TaxReminderHelper.checkAndNotifyFilingDeadlines(getApplication(), listOf(yearObj))
+            }
+        }
+    }
+
+    fun verifyCurrentUserPassword(rawPassword: String, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            val ok = repository.verifyCurrentUserPassword(rawPassword)
+            onResult(ok)
+        }
+    }
+
+    fun resetAllDataToZero(
+        deleteAccounts: Boolean = false,
+        deleteTaxData: Boolean = false,
+        onComplete: () -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            repository.resetAllDataToZero(
+                deleteAccounts = deleteAccounts,
+                deleteTaxData = deleteTaxData,
+                onDeleteTaxData = { uid ->
+                    taxRepository.clearAllTaxDataForUser(getApplication(), uid)
+                }
+            )
             onComplete()
         }
     }
@@ -819,5 +935,356 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             repository.moveAccountOrder(id, moveUp)
         }
+    }
+
+    // --- PAKISTAN TAXPAYER MODE ACTIONS ---
+
+    fun ensureCurrentTaxYearExists() {
+        viewModelScope.launch {
+            val yearObj = taxRepository.ensureTaxYearExists(selectedTaxYear.value)
+            TaxReminderHelper.checkAndNotifyFilingDeadlines(getApplication(), listOf(yearObj))
+        }
+    }
+
+    fun selectTaxYear(taxYear: Int) {
+        selectedTaxYear.value = taxYear
+    }
+
+    fun decryptTaxSensitive(encrypted: String): String {
+        return TaxCryptoHelper.decryptSensitive(getApplication(), encrypted)
+    }
+
+    fun saveTaxProfile(
+        fullName: String,
+        cnicPlain: String,
+        ntnPlain: String,
+        filerStatus: String,
+        occupationType: String,
+        note: String,
+        onError: (String) -> Unit = {},
+        onSuccess: () -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            try {
+                taxRepository.saveTaxProfile(
+                    context = getApplication(),
+                    fullName = fullName,
+                    cnicPlain = cnicPlain,
+                    ntnPlain = ntnPlain,
+                    filerStatus = filerStatus,
+                    occupationType = occupationType,
+                    note = note
+                )
+                onSuccess()
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to save tax profile")
+            }
+        }
+    }
+
+    fun createTaxYear(
+        taxYear: Int,
+        filingDeadline: String,
+        reminderDaysBefore: Int,
+        onError: (String) -> Unit = {},
+        onSuccess: (TaxYearEntity) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            try {
+                val created = taxRepository.createTaxYear(taxYear, filingDeadline, reminderDaysBefore)
+                selectedTaxYear.value = created.taxYear
+                TaxReminderHelper.checkAndNotifyFilingDeadlines(getApplication(), listOf(created))
+                onSuccess(created)
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to create tax year")
+            }
+        }
+    }
+
+    fun updateTaxYearDeadline(
+        taxYear: Int,
+        filingDeadline: String,
+        reminderDaysBefore: Int,
+        onError: (String) -> Unit = {},
+        onSuccess: () -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            try {
+                taxRepository.updateTaxYearDeadline(taxYear, filingDeadline, reminderDaysBefore)
+                val updatedYear = taxYears.value.find { it.taxYear == taxYear }?.copy(
+                    filingDeadline = filingDeadline,
+                    reminderDaysBefore = reminderDaysBefore
+                )
+                if (updatedYear != null) {
+                    TaxReminderHelper.checkAndNotifyFilingDeadlines(getApplication(), listOf(updatedYear))
+                }
+                onSuccess()
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to update deadline")
+            }
+        }
+    }
+
+    fun toggleTaxYearLock(
+        taxYear: Int,
+        lock: Boolean,
+        onError: (String) -> Unit = {},
+        onSuccess: () -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            try {
+                taxRepository.toggleTaxYearLock(taxYear, lock)
+                onSuccess()
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to update lock status")
+            }
+        }
+    }
+
+    fun updateCustomTaxSlabs(
+        taxYear: Int,
+        slabs: List<TaxSlabItem>,
+        onError: (String) -> Unit = {},
+        onSuccess: () -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            try {
+                taxRepository.updateCustomSlabs(taxYear, slabs)
+                onSuccess()
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to save tax slabs")
+            }
+        }
+    }
+
+    fun saveTaxEntry(
+        id: Long = 0L,
+        taxYear: Int,
+        entryGroup: String,
+        category: String,
+        amount: Double,
+        date: String,
+        sourceOrPayer: String = "",
+        referenceNumber: String = "",
+        proofNote: String = "",
+        documentId: Long? = null,
+        notes: String = "",
+        onError: (String) -> Unit = {},
+        onSuccess: (Long) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            try {
+                val savedId = taxRepository.saveTaxEntry(
+                    id = id,
+                    taxYear = taxYear,
+                    entryGroup = entryGroup,
+                    category = category,
+                    amount = amount,
+                    date = date,
+                    sourceOrPayer = sourceOrPayer,
+                    referenceNumber = referenceNumber,
+                    proofNote = proofNote,
+                    documentId = documentId,
+                    notes = notes
+                )
+                onSuccess(savedId)
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to save tax record")
+            }
+        }
+    }
+
+    fun deleteTaxEntry(
+        entryId: Long,
+        onError: (String) -> Unit = {},
+        onSuccess: () -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            try {
+                taxRepository.deleteTaxEntry(entryId)
+                onSuccess()
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to delete tax record")
+            }
+        }
+    }
+
+    fun saveWealthItem(
+        id: Long = 0L,
+        taxYear: Int,
+        periodType: String,
+        assetCategory: String,
+        title: String,
+        amount: Double,
+        isLiability: Boolean,
+        notes: String = "",
+        onError: (String) -> Unit = {},
+        onSuccess: (Long) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            try {
+                val savedId = taxRepository.saveWealthItem(
+                    id = id,
+                    taxYear = taxYear,
+                    periodType = periodType,
+                    assetCategory = assetCategory,
+                    title = title,
+                    amount = amount,
+                    isLiability = isLiability,
+                    notes = notes
+                )
+                onSuccess(savedId)
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to save wealth item")
+            }
+        }
+    }
+
+    fun deleteWealthItem(
+        itemId: Long,
+        onError: (String) -> Unit = {},
+        onSuccess: () -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            try {
+                taxRepository.deleteWealthItem(itemId)
+                onSuccess()
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to delete wealth item")
+            }
+        }
+    }
+
+    fun autoFillBankBalancesForWealth(
+        taxYear: Int,
+        periodType: String,
+        onError: (String) -> Unit = {},
+        onSuccess: (Int) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            try {
+                val count = taxRepository.autoFillBankBalancesForWealth(taxYear, periodType)
+                onSuccess(count)
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to auto-fill bank balances")
+            }
+        }
+    }
+
+    fun autoPullUdhaarForWealth(
+        taxYear: Int,
+        periodType: String,
+        onError: (String) -> Unit = {},
+        onSuccess: (Int) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            try {
+                val count = taxRepository.autoPullUdhaarForWealth(taxYear, periodType)
+                onSuccess(count)
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to pull Udhaar balances")
+            }
+        }
+    }
+
+    fun saveTaxDocumentFromUri(
+        taxYear: Int,
+        title: String,
+        category: String,
+        uri: Uri,
+        onError: (String) -> Unit = {},
+        onSuccess: (TaxDocumentEntity) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            try {
+                val doc = taxRepository.saveDocumentFromUri(
+                    context = getApplication(),
+                    taxYear = taxYear,
+                    title = title,
+                    category = category,
+                    uri = uri
+                )
+                onSuccess(doc)
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to save document")
+            }
+        }
+    }
+
+    fun deleteTaxDocument(
+        docId: Long,
+        onError: (String) -> Unit = {},
+        onSuccess: () -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            try {
+                taxRepository.deleteDocument(docId)
+                onSuccess()
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to delete document")
+            }
+        }
+    }
+
+    fun createTaxBackupBytes(
+        passphrase: String,
+        scopeTaxYear: Int?,
+        onError: (String) -> Unit = {},
+        onSuccess: (ByteArray) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            try {
+                val bytes = taxRepository.createEncryptedBackupBytes(getApplication(), passphrase, scopeTaxYear)
+                onSuccess(bytes)
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to create encrypted backup")
+            }
+        }
+    }
+
+    fun restoreTaxBackupBytes(
+        encryptedBytes: ByteArray,
+        passphrase: String,
+        onError: (String) -> Unit = {},
+        onSuccess: (Int) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            try {
+                val restoredYears = taxRepository.restoreEncryptedBackupBytes(getApplication(), encryptedBytes, passphrase)
+                onSuccess(restoredYears)
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to restore backup. Check passphrase.")
+            }
+        }
+    }
+
+    fun buildTaxYearSummary(
+        taxYear: Int,
+        profile: TaxProfileEntity?,
+        manualEntries: List<TaxEntryEntity>,
+        allTransactions: List<TransactionEntity>,
+        wealthItems: List<TaxWealthItemEntity>,
+        documents: List<TaxDocumentEntity>
+    ): TaxYearSummary {
+        val decCnic = profile?.cnicEncrypted?.let { decryptTaxSensitive(it) }.orEmpty()
+        val decNtn = profile?.ntnEncrypted?.let { decryptTaxSensitive(it) }.orEmpty()
+        return taxRepository.buildYearSummary(
+            taxYear = taxYear,
+            profile = profile,
+            decryptedCnic = decCnic,
+            decryptedNtn = decNtn,
+            manualEntries = manualEntries,
+            linkedTransactions = allTransactions,
+            wealthItems = wealthItems,
+            documents = documents
+        )
+    }
+
+    fun getMergedTaxItemsForYear(
+        taxYear: Int,
+        manualEntries: List<TaxEntryEntity>,
+        allTransactions: List<TransactionEntity>
+    ): List<TaxDisplayItem> {
+        return taxRepository.mergeEntriesAndLinkedTransactions(taxYear, manualEntries, allTransactions)
     }
 }

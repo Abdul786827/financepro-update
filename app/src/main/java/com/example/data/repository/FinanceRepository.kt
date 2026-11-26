@@ -184,7 +184,11 @@ class FinanceRepository(
         description: String = "",
         extraItem: String = "",
         petrolLiters: Double = 0.0,
-        petrolRate: Double = 0.0
+        petrolRate: Double = 0.0,
+        isTaxRelated: Boolean = false,
+        taxSectionType: String = "",
+        taxCategory: String = "",
+        taxYearId: String = ""
     ): Long = runAtomic {
         val uid = resolveActiveUserId()
         val accountsList = dao.getAllAccountsDirectForUser(uid).toMutableList()
@@ -266,7 +270,11 @@ class FinanceRepository(
             totalAccountBalance = snap.total,
             petrolLiters = petrolLiters,
             petrolRate = petrolRate,
-            extraItem = extraItem
+            extraItem = extraItem,
+            isTaxRelated = isTaxRelated,
+            taxSectionType = if (isTaxRelated) taxSectionType.trim() else "",
+            taxCategory = if (isTaxRelated) taxCategory.trim() else "",
+            taxYearId = if (isTaxRelated) taxYearId.trim().ifBlank { com.example.util.PakistanTaxYearUtils.taxYearForDate(date).toString() } else ""
         )
 
         val txId = dao.insertTransaction(transaction)
@@ -385,7 +393,11 @@ class FinanceRepository(
         newComments: String = "",
         newExtraItem: String = "",
         newPetrolLiters: Double = 0.0,
-        newPetrolRate: Double = 0.0
+        newPetrolRate: Double = 0.0,
+        isTaxRelated: Boolean = oldTx.isTaxRelated,
+        taxSectionType: String = oldTx.taxSectionType,
+        taxCategory: String = oldTx.taxCategory,
+        taxYearId: String = oldTx.taxYearId
     ) = runAtomic {
         val uid = oldTx.userId
         val accountsList = dao.getAllAccountsDirectForUser(uid).toMutableList()
@@ -508,6 +520,10 @@ class FinanceRepository(
             mashreqBalance = snap.mashreq,
             walletBalance = snap.wallet,
             totalAccountBalance = snap.total,
+            isTaxRelated = isTaxRelated,
+            taxSectionType = if (isTaxRelated) taxSectionType.trim() else "",
+            taxCategory = if (isTaxRelated) taxCategory.trim() else "",
+            taxYearId = if (isTaxRelated) taxYearId.trim().ifBlank { com.example.util.PakistanTaxYearUtils.taxYearForDate(newDate).toString() } else "",
             updatedAt = System.currentTimeMillis()
         )
 
@@ -734,13 +750,54 @@ class FinanceRepository(
         dao.updateBiometricEnabled(profile.id, enabled)
     }
 
+    suspend fun setTaxpayerEnabled(enabled: Boolean) {
+        val profile = dao.getLoggedInUser() ?: dao.getUserProfileDirect() ?: dao.getAnyUserProfile() ?: return
+        dao.updateTaxpayerEnabled(profile.id, enabled)
+    }
+
+    suspend fun bulkTagTransactionsForTax(
+        ids: List<Long>,
+        isTaxRelated: Boolean,
+        taxSectionType: String,
+        taxCategory: String,
+        taxYearId: String
+    ) = runAtomic {
+        if (ids.isEmpty()) return@runAtomic
+        val uid = resolveActiveUserId()
+        val cleanSection = if (isTaxRelated) taxSectionType.trim() else ""
+        val cleanCat = if (isTaxRelated) taxCategory.trim() else ""
+        val cleanYear = if (isTaxRelated) taxYearId.trim() else ""
+        dao.bulkUpdateTransactionTaxTag(
+            userId = uid,
+            ids = ids,
+            isTaxRelated = isTaxRelated,
+            taxSectionType = cleanSection,
+            taxCategory = cleanCat,
+            taxYearId = cleanYear,
+            updatedAt = System.currentTimeMillis()
+        )
+    }
+
+    suspend fun verifyCurrentUserPassword(rawPassword: String): Boolean {
+        val clean = rawPassword.trim()
+        if (clean.isEmpty()) return false
+        val profile = dao.getLoggedInUser() ?: dao.getUserProfileDirect() ?: dao.getAnyUserProfile()
+            ?: return false
+        return SecurityUtils.verifyPassword(clean, profile.passwordHash)
+    }
+
     /**
      * Resets the current user's financial history to 0.
      * - deleteAccounts == false: preserves the user's accounts with balances reset to 0.0.
      * - deleteAccounts == true: also removes all user accounts so the user starts completely clean (0 accounts).
+     * - deleteTaxData == false (default): preserves Pakistan Taxpayer records unless explicitly confirmed.
      * Never creates default HBL/UBL/wallet accounts.
      */
-    suspend fun resetAllDataToZero(deleteAccounts: Boolean = false) {
+    suspend fun resetAllDataToZero(
+        deleteAccounts: Boolean = false,
+        deleteTaxData: Boolean = false,
+        onDeleteTaxData: (suspend (Int) -> Unit)? = null
+    ) {
         runAtomic {
             val uid = resolveActiveUserId()
             dao.clearTransactionsForUser(uid)
@@ -770,6 +827,10 @@ class FinanceRepository(
                 if (resetAccounts.isNotEmpty()) {
                     dao.insertAccounts(resetAccounts)
                 }
+            }
+
+            if (deleteTaxData) {
+                onDeleteTaxData?.invoke(uid)
             }
         }
     }

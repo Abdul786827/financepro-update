@@ -1783,7 +1783,7 @@ class ExampleRobolectricTest {
 
             // Upgrade DB via real Room builder (non-destructive)
             val upgradedDb = Room.databaseBuilder(context, FinanceDatabase::class.java, migDbName)
-                .addMigrations(FinanceDatabase.MIGRATION_7_8, FinanceDatabase.MIGRATION_8_9, FinanceDatabase.MIGRATION_9_10)
+                .addMigrations(*FinanceDatabase.ALL_MIGRATIONS)
                 .allowMainThreadQueries()
                 .build()
             val migDao = upgradedDb.financeDao()
@@ -1806,9 +1806,9 @@ class ExampleRobolectricTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
 
         // 1. Version metadata & one-time What's New tracking
-        assertEquals(2, AppVersionConfig.versionCode)
-        assertEquals("1.1.0", AppVersionConfig.versionName)
-        assertEquals("Version 1.1.0 (build 2)", AppVersionConfig.formattedVersion)
+        assertEquals(3, AppVersionConfig.versionCode)
+        assertEquals("1.2.0", AppVersionConfig.versionName)
+        assertEquals("Version 1.2.0 (build 3)", AppVersionConfig.formattedVersion)
 
         context.getSharedPreferences("finance_pro_version_prefs", Context.MODE_PRIVATE).edit().clear().apply()
         assertTrue(AppVersionConfig.shouldShowWhatsNew(context))
@@ -1816,6 +1816,7 @@ class ExampleRobolectricTest {
         assertFalse(AppVersionConfig.shouldShowWhatsNew(context))
 
         // 2. Changelog history
+        assertTrue(AppChangelog.releases.any { it.versionName == "1.2.0" && it.versionCode == 3 && it.changes.isNotEmpty() })
         assertTrue(AppChangelog.releases.any { it.versionName == "1.1.0" && it.versionCode == 2 && it.changes.isNotEmpty() })
         assertTrue(AppChangelog.releases.any { it.versionName == "1.0.0" && it.versionCode == 1 && it.changes.isNotEmpty() })
 
@@ -1825,20 +1826,20 @@ class ExampleRobolectricTest {
             AppVersionConfig.UPDATE_CHECK_URL
         )
 
-        val newerPayload = """{"latestVersionCode": 3, "latestVersionName": "1.2.0", "downloadUrl": "https://example.com/FinancePro.apk", "changes": ["Cloud sync", "Speed improvements"]}"""
-        val updateAvailable = AppUpdateChecker.evaluateJsonPayload(newerPayload, currentVersionCode = 2, currentVersionName = "1.1.0")
+        val newerPayload = """{"latestVersionCode": 4, "latestVersionName": "1.3.0", "downloadUrl": "https://example.com/FinancePro.apk", "changes": ["Cloud sync", "Speed improvements"]}"""
+        val updateAvailable = AppUpdateChecker.evaluateJsonPayload(newerPayload, currentVersionCode = 3, currentVersionName = "1.2.0")
         assertTrue(updateAvailable is UpdateCheckResult.UpdateAvailable)
         val availInfo = (updateAvailable as UpdateCheckResult.UpdateAvailable).info
-        assertEquals(3, availInfo.latestVersionCode)
-        assertEquals("1.2.0", availInfo.latestVersionName)
+        assertEquals(4, availInfo.latestVersionCode)
+        assertEquals("1.3.0", availInfo.latestVersionName)
         assertEquals("https://example.com/FinancePro.apk", availInfo.downloadUrl)
         assertEquals(2, availInfo.changes.size)
 
-        val currentPayload = """{"latestVersionCode": 2, "latestVersionName": "1.1.0", "downloadUrl": "", "changes": []}"""
-        assertTrue(AppUpdateChecker.evaluateJsonPayload(currentPayload, 2, "1.1.0") is UpdateCheckResult.UpToDate)
-        assertTrue(AppUpdateChecker.evaluateJsonPayload("{bad json", 2, "1.1.0") is UpdateCheckResult.Error)
-        assertTrue(AppUpdateChecker.evaluateJsonPayload("<html>404</html>", 2, "1.1.0") is UpdateCheckResult.Error)
-        assertTrue(AppUpdateChecker.evaluateJsonPayload("", 2, "1.1.0") is UpdateCheckResult.Error)
+        val currentPayload = """{"latestVersionCode": 3, "latestVersionName": "1.2.0", "downloadUrl": "", "changes": []}"""
+        assertTrue(AppUpdateChecker.evaluateJsonPayload(currentPayload, 3, "1.2.0") is UpdateCheckResult.UpToDate)
+        assertTrue(AppUpdateChecker.evaluateJsonPayload("{bad json", 3, "1.2.0") is UpdateCheckResult.Error)
+        assertTrue(AppUpdateChecker.evaluateJsonPayload("<html>404</html>", 3, "1.2.0") is UpdateCheckResult.Error)
+        assertTrue(AppUpdateChecker.evaluateJsonPayload("", 3, "1.2.0") is UpdateCheckResult.Error)
 
         fun clientWithResponse(code: Int, body: String): OkHttpClient =
             OkHttpClient.Builder().addInterceptor { chain ->
@@ -1887,7 +1888,7 @@ class ExampleRobolectricTest {
             }
         }
         composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithText("Version 1.1.0 (build 2)").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Version 1.2.0 (build 3)").assertIsDisplayed()
         composeTestRule.onNodeWithTag("accounts_empty_state").assertIsDisplayed()
         composeTestRule.onNodeWithTag("empty_add_account_button").assertIsDisplayed()
     }

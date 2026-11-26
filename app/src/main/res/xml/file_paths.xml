@@ -3,4 +3,6 @@
     <cache-path name="export_reports" path="reports/" />
     <cache-path name="camera_images" path="images/" />
     <cache-path name="shared_files" path="." />
+    <files-path name="tax_documents" path="tax_docs/" />
+    <files-path name="tax_backups" path="tax_backups/" />
 </paths>

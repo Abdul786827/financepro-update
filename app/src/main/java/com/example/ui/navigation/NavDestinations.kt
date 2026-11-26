@@ -10,6 +10,7 @@ enum class AppScreen(val title: String, val iconName: String) {
     SALARY_LOANS("Salary & Loans", "payments"),
     UDHAAR("Udhaar (Lend & Borrow)", "handshake"),
     SAVINGS("Savings", "savings"),
+    TAX("Pakistan Tax", "account_balance"),
     REPORTS("Reports & Export", "picture_as_pdf"),
     SETTINGS("Profile & Settings", "settings")
 }

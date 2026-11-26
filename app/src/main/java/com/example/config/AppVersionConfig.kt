@@ -10,7 +10,7 @@ import com.example.BuildConfig
 object AppVersionConfig {
     val versionCode: Int get() = BuildConfig.VERSION_CODE
     val versionName: String get() = BuildConfig.VERSION_NAME
-    const val DB_SCHEMA_VERSION: Int = 10
+    const val DB_SCHEMA_VERSION: Int = 11
 
     /**
      * Remote update endpoint pointing to the hosted version.json file:

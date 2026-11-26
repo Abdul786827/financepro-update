@@ -34,6 +34,7 @@ import com.example.ui.components.accountTypeLabel
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.FinanceViewModel
 import com.example.util.DateUtils
+import com.example.util.PakistanTaxYearUtils
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -48,6 +49,8 @@ fun AddTransactionScreen(
 ) {
     val context = LocalContext.current
     val accounts by viewModel.visibleAccounts.collectAsStateWithLifecycle()
+    val userProfile by viewModel.userProfile.collectAsStateWithLifecycle()
+    val taxCustomCategories by viewModel.taxCustomCategories.collectAsStateWithLifecycle()
     val scrollState = rememberScrollState()
 
     // Form states
@@ -116,6 +119,29 @@ fun AddTransactionScreen(
 
     // Extra Expense specific
     var extraItemText by remember { mutableStateOf("") }
+
+    // Optional Taxpayer Mode tagging (links transaction to Tax Year without double-counting)
+    var isTaxRelated by remember { mutableStateOf(transactionToEdit?.isTaxRelated ?: false) }
+    var taxSectionType by remember {
+        mutableStateOf(
+            transactionToEdit?.taxSectionType?.ifBlank { null }
+                ?: if ((transactionToEdit?.type ?: initialType) == "INCOME") TAX_GROUP_INCOME else TAX_GROUP_EXPENSE
+        )
+    }
+    var taxCategory by remember { mutableStateOf(transactionToEdit?.taxCategory ?: "") }
+    var taxYearId by remember {
+        mutableStateOf(
+            transactionToEdit?.taxYearId?.ifBlank { null }
+                ?: PakistanTaxYearUtils.taxYearForDate(dateText).toString()
+        )
+    }
+    var taxYearManuallyEdited by remember { mutableStateOf(transactionToEdit?.taxYearId?.isNotBlank() == true) }
+
+    LaunchedEffect(dateText) {
+        if (!taxYearManuallyEdited) {
+            taxYearId = PakistanTaxYearUtils.taxYearForDate(dateText).toString()
+        }
+    }
 
     // Dialog state
     var showDatePicker by remember { mutableStateOf(false) }
@@ -843,6 +869,131 @@ fun AddTransactionScreen(
                 }
             }
 
+            // 7B. Optional Pakistan Tax Tagging (shown when Taxpayer Mode is enabled or already tagged)
+            if (selectedType != "TRANSFER" && (userProfile?.isTaxpayerEnabled == true || isTaxRelated)) {
+                val derivedYear = PakistanTaxYearUtils.taxYearForDate(dateText)
+                val taxYearChoices = listOf(derivedYear - 1, derivedYear, derivedYear + 1).distinct()
+                val customCatsForGroup = taxCustomCategories
+                    .filter { it.entryGroup == taxSectionType }
+                    .map { it.name }
+                val taxCatPresets = (PakistanTaxConstants.defaultCategoriesForGroup(taxSectionType) + customCatsForGroup).distinct()
+
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Tax Related (Pakistan Return)",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "Include this transaction in Tax Year $taxYearId without changing normal totals",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = isTaxRelated,
+                                onCheckedChange = { checked ->
+                                    isTaxRelated = checked
+                                    if (checked) {
+                                        if (taxSectionType.isBlank()) {
+                                            taxSectionType = if (selectedType == "INCOME") TAX_GROUP_INCOME else TAX_GROUP_EXPENSE
+                                        }
+                                        if (taxCategory.isBlank()) {
+                                            taxCategory = PakistanTaxConstants.defaultCategoriesForGroup(taxSectionType).firstOrNull() ?: categoryText
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.testTag("tx_tax_switch")
+                            )
+                        }
+
+                        if (isTaxRelated) {
+                            Text("Tax Section", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                listOf(
+                                    TAX_GROUP_INCOME to "Income",
+                                    TAX_GROUP_EXPENSE to "Expense",
+                                    TAX_GROUP_DEDUCTION to "Deduction",
+                                    TAX_GROUP_WITHHOLDING to "Withholding"
+                                ).forEach { (secKey, secLabel) ->
+                                    FilterChip(
+                                        selected = taxSectionType == secKey,
+                                        onClick = {
+                                            taxSectionType = secKey
+                                            val firstPreset = PakistanTaxConstants.defaultCategoriesForGroup(secKey).firstOrNull().orEmpty()
+                                            if (firstPreset.isNotBlank()) taxCategory = firstPreset
+                                        },
+                                        label = { Text(secLabel) },
+                                        modifier = Modifier.testTag("tx_tax_section_$secKey")
+                                    )
+                                }
+                            }
+
+                            OutlinedTextField(
+                                value = taxCategory,
+                                onValueChange = { taxCategory = it },
+                                label = { Text("Tax Category") },
+                                singleLine = true,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("tx_tax_category_input")
+                            )
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                taxCatPresets.forEach { preset ->
+                                    FilterChip(
+                                        selected = taxCategory.equals(preset, ignoreCase = true),
+                                        onClick = { taxCategory = preset },
+                                        label = { Text(preset, fontSize = 11.sp) }
+                                    )
+                                }
+                            }
+
+                            Text("Tax Year", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                taxYearChoices.forEach { yr ->
+                                    FilterChip(
+                                        selected = taxYearId == yr.toString(),
+                                        onClick = {
+                                            taxYearId = yr.toString()
+                                            taxYearManuallyEdited = true
+                                        },
+                                        label = { Text(PakistanTaxYearUtils.formatShortTaxYearLabel(yr)) }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // 8. Submit / Save Button
             Button(
                 onClick = {
@@ -883,6 +1034,14 @@ fun AddTransactionScreen(
 
                     val categoryToSave = if (selectedType == "TRANSFER") "Account Transfer" else categoryText.trim()
                     val descToSave = descriptionText.ifBlank { categoryToSave }
+                    val saveTaxRelated = isTaxRelated && selectedType != "TRANSFER"
+                    val saveTaxSection = if (saveTaxRelated) taxSectionType.ifBlank {
+                        if (selectedType == "INCOME") TAX_GROUP_INCOME else TAX_GROUP_EXPENSE
+                    } else ""
+                    val saveTaxCat = if (saveTaxRelated) taxCategory.trim().ifBlank { categoryToSave } else ""
+                    val saveTaxYear = if (saveTaxRelated) taxYearId.trim().ifBlank {
+                        PakistanTaxYearUtils.taxYearForDate(dateText).toString()
+                    } else ""
 
                     val onSavedCallback = {
                         isSubmitting = false
@@ -905,6 +1064,10 @@ fun AddTransactionScreen(
                             extraItem = extraItemText,
                             petrolLiters = litersText.toDoubleOrNull() ?: 0.0,
                             petrolRate = rateText.toDoubleOrNull() ?: 0.0,
+                            isTaxRelated = saveTaxRelated,
+                            taxSectionType = saveTaxSection,
+                            taxCategory = saveTaxCat,
+                            taxYearId = saveTaxYear,
                             onComplete = onSavedCallback
                         )
                     } else {
@@ -921,6 +1084,10 @@ fun AddTransactionScreen(
                             extraItem = extraItemText,
                             petrolLiters = litersText.toDoubleOrNull() ?: 0.0,
                             petrolRate = rateText.toDoubleOrNull() ?: 0.0,
+                            isTaxRelated = saveTaxRelated,
+                            taxSectionType = saveTaxSection,
+                            taxCategory = saveTaxCat,
+                            taxYearId = saveTaxYear,
                             onComplete = onSavedCallback
                         )
                     }

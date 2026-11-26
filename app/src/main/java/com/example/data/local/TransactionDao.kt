@@ -77,6 +77,20 @@ interface TransactionDao {
     @Query("UPDATE transactions SET toAccount = :newName WHERE userId = :userId AND LOWER(toAccount) = LOWER(:oldName)")
     suspend fun renameToAccountInTransactionsForUser(userId: Int, oldName: String, newName: String)
 
+    @Query("UPDATE transactions SET isTaxRelated = :isTaxRelated, taxSectionType = :taxSectionType, taxCategory = :taxCategory, taxYearId = :taxYearId, updatedAt = :updatedAt WHERE userId = :userId AND id IN (:ids)")
+    suspend fun bulkUpdateTransactionTaxTag(
+        userId: Int,
+        ids: List<Long>,
+        isTaxRelated: Boolean,
+        taxSectionType: String,
+        taxCategory: String,
+        taxYearId: String,
+        updatedAt: Long
+    )
+
+    @Query("UPDATE transactions SET isTaxRelated = 0, taxSectionType = '', taxCategory = '', taxYearId = '' WHERE userId = :userId AND isTaxRelated = 1")
+    suspend fun clearAllTaxTagsOnTransactionsForUser(userId: Int)
+
     @Query("DELETE FROM transactions WHERE userId = :userId")
     suspend fun deleteAllTransactionsForUser(userId: Int)
 }

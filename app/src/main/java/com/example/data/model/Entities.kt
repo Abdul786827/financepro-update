@@ -95,6 +95,10 @@ data class TransactionEntity(
     val petrolLiters: Double = 0.0,
     val petrolRate: Double = 0.0,
     val extraItem: String = "",
+    val isTaxRelated: Boolean = false,
+    val taxSectionType: String = "",
+    val taxCategory: String = "",
+    val taxYearId: String = "",
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 )
@@ -201,6 +205,7 @@ data class UserProfileEntity(
     val currencySymbol: String = "Rs.",
     val isLoggedIn: Boolean = false,
     val profileImageBase64: String = "",
+    val isTaxpayerEnabled: Boolean = false,
     val createdAt: Long = System.currentTimeMillis()
 )
 

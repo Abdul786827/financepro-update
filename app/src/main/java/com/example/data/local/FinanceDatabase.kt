@@ -26,7 +26,13 @@ import com.example.util.DatabaseBackupManager
         UdhaarRecordEntity::class,
         UdhaarRepaymentEntity::class,
         SavingsPotEntity::class,
-        SavingsEntryEntity::class
+        SavingsEntryEntity::class,
+        TaxProfileEntity::class,
+        TaxYearEntity::class,
+        TaxEntryEntity::class,
+        TaxWealthItemEntity::class,
+        TaxDocumentEntity::class,
+        TaxCustomCategoryEntity::class
     ],
     version = AppVersionConfig.DB_SCHEMA_VERSION,
     exportSchema = false
@@ -34,6 +40,7 @@ import com.example.util.DatabaseBackupManager
 abstract class FinanceDatabase : RoomDatabase() {
     abstract fun financeDao(): FinanceDao
     abstract fun transactionDao(): TransactionDao
+    abstract fun taxDao(): TaxDao
 
     companion object {
         const val DATABASE_NAME = "finance_statement_database.db"
@@ -291,6 +298,107 @@ abstract class FinanceDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE user_profile ADD COLUMN isTaxpayerEnabled INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE transactions ADD COLUMN isTaxRelated INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE transactions ADD COLUMN taxSectionType TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE transactions ADD COLUMN taxCategory TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE transactions ADD COLUMN taxYearId TEXT NOT NULL DEFAULT ''")
+
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS tax_profiles (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        userId INTEGER NOT NULL,
+                        fullName TEXT NOT NULL,
+                        cnicEncrypted TEXT NOT NULL,
+                        ntnEncrypted TEXT NOT NULL,
+                        filerStatus TEXT NOT NULL,
+                        occupationType TEXT NOT NULL,
+                        note TEXT NOT NULL,
+                        updatedAt INTEGER NOT NULL
+                    )
+                """.trimIndent())
+
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS tax_years (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        userId INTEGER NOT NULL,
+                        taxYear INTEGER NOT NULL,
+                        label TEXT NOT NULL,
+                        startDate TEXT NOT NULL,
+                        endDate TEXT NOT NULL,
+                        filingDeadline TEXT NOT NULL,
+                        reminderDaysBefore INTEGER NOT NULL,
+                        isLocked INTEGER NOT NULL,
+                        lockedAt INTEGER NOT NULL,
+                        customSlabJson TEXT NOT NULL,
+                        createdAt INTEGER NOT NULL
+                    )
+                """.trimIndent())
+
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS tax_entries (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        userId INTEGER NOT NULL,
+                        taxYear INTEGER NOT NULL,
+                        entryGroup TEXT NOT NULL,
+                        category TEXT NOT NULL,
+                        amount REAL NOT NULL,
+                        date TEXT NOT NULL,
+                        sourceOrPayer TEXT NOT NULL,
+                        referenceNumber TEXT NOT NULL,
+                        proofNote TEXT NOT NULL,
+                        documentId INTEGER,
+                        notes TEXT NOT NULL,
+                        createdAt INTEGER NOT NULL,
+                        updatedAt INTEGER NOT NULL
+                    )
+                """.trimIndent())
+
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS tax_wealth_items (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        userId INTEGER NOT NULL,
+                        taxYear INTEGER NOT NULL,
+                        periodType TEXT NOT NULL,
+                        assetCategory TEXT NOT NULL,
+                        title TEXT NOT NULL,
+                        amount REAL NOT NULL,
+                        isLiability INTEGER NOT NULL,
+                        isAutoSynced INTEGER NOT NULL,
+                        linkedSourceKey TEXT NOT NULL,
+                        notes TEXT NOT NULL,
+                        updatedAt INTEGER NOT NULL
+                    )
+                """.trimIndent())
+
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS tax_documents (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        userId INTEGER NOT NULL,
+                        taxYear INTEGER NOT NULL,
+                        title TEXT NOT NULL,
+                        category TEXT NOT NULL,
+                        filePath TEXT NOT NULL,
+                        mimeType TEXT NOT NULL,
+                        originalFileName TEXT NOT NULL,
+                        fileSizeBytes INTEGER NOT NULL,
+                        createdAt INTEGER NOT NULL
+                    )
+                """.trimIndent())
+
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS tax_custom_categories (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        userId INTEGER NOT NULL,
+                        entryGroup TEXT NOT NULL,
+                        name TEXT NOT NULL
+                    )
+                """.trimIndent())
+            }
+        }
+
         val ALL_MIGRATIONS = arrayOf(
             MIGRATION_2_3,
             MIGRATION_3_4,
@@ -299,7 +407,8 @@ abstract class FinanceDatabase : RoomDatabase() {
             MIGRATION_6_7,
             MIGRATION_7_8,
             MIGRATION_8_9,
-            MIGRATION_9_10
+            MIGRATION_9_10,
+            MIGRATION_10_11
         )
 
         /**

@@ -11,9 +11,23 @@ data class ChangelogRelease(
 object AppChangelog {
     val releases: List<ChangelogRelease> = listOf(
         ChangelogRelease(
+            versionCode = 3,
+            versionName = "1.2.0",
+            releaseDate = "Current Release",
+            title = "Pakistan Taxpayer Mode & Return Readiness",
+            changes = listOf(
+                "Added Pakistan Taxpayer Mode toggle in Settings with a dedicated biometric/password-protected Tax tab.",
+                "Encrypted Taxpayer Profile storing CNIC and NTN securely with masked display and one-tap copy.",
+                "Automatic Pakistan Tax Year handling (1 July – 30 June) with year switching, editable filing deadline, deadline notifications, and Close/Lock archiving.",
+                "Per-year tracking for Income, Withholding Tax, Advance/Challan Tax Paid, Deductions & Credits, Tax Expenses, Private Document Vault, and Wealth Statement reconciliation with bank balances & Udhaar.",
+                "Optional Tax switch on transactions plus bulk tax-tagging from Daily Statement without double counting.",
+                "FBR-structured PDF, Excel CSV, and Document ZIP exports, plus passphrase-encrypted Tax Backup & Restore."
+            )
+        ),
+        ChangelogRelease(
             versionCode = 2,
             versionName = "1.1.0",
-            releaseDate = "Current Release",
+            releaseDate = "Previous Release",
             title = "Flexible Accounts, Data Isolation & Safe Upgrades",
             changes = listOf(
                 "All accounts—including HBL, UBL, Mashreq, Sadapay, Easypaisa, and JazzCash—can now be edited, hidden, or deleted.",

@@ -52,6 +52,19 @@ val financeBottomNavItems: List<BottomNavItem> = listOf(
     BottomNavItem(AppScreen.SAVINGS, "Savings", Icons.Default.Savings, "nav_savings")
 )
 
+fun buildFinanceBottomNavItems(showTax: Boolean): List<BottomNavItem> {
+    return if (showTax) {
+        financeBottomNavItems + BottomNavItem(
+            screen = AppScreen.TAX,
+            label = "Tax",
+            icon = Icons.Default.AssuredWorkload,
+            testTag = "nav_tax"
+        )
+    } else {
+        financeBottomNavItems
+    }
+}
+
 @Composable
 fun ScrollableFinanceBottomBar(
     currentScreen: AppScreen,

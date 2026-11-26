@@ -22,7 +22,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import android.widget.Toast
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import com.example.data.model.AccountEntity
+import com.example.data.model.PakistanTaxConstants
+import com.example.data.model.TAX_GROUP_DEDUCTION
+import com.example.data.model.TAX_GROUP_EXPENSE
+import com.example.data.model.TAX_GROUP_INCOME
+import com.example.data.model.TAX_GROUP_WITHHOLDING
 import com.example.data.model.TransactionEntity
 import com.example.ui.components.DailyStatementTableView
 import com.example.ui.components.accountTypeIcon
@@ -31,6 +39,7 @@ import com.example.ui.components.resolveAccountIconByName
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.FinanceViewModel
 import com.example.util.DateUtils
+import com.example.util.PakistanTaxYearUtils
 import com.example.util.StatementExportUtil
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -44,12 +53,16 @@ fun DailyStatementScreen(
     val context = LocalContext.current
     val filteredTransactions by viewModel.filteredTransactions.collectAsStateWithLifecycle()
     val accounts by viewModel.accounts.collectAsStateWithLifecycle()
+    val userProfile by viewModel.userProfile.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val selectedAccount by viewModel.selectedAccountFilter.collectAsStateWithLifecycle()
     val selectedType by viewModel.selectedTypeFilter.collectAsStateWithLifecycle()
 
     var showDeleteConfirm by remember { mutableStateOf<TransactionEntity?>(null) }
     var viewMode by remember { mutableStateOf("LIST") } // "LIST" or "TABLE"
+    var isBulkTaxMode by remember { mutableStateOf(false) }
+    var selectedTxIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
+    var showBulkTaxDialog by remember { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -196,8 +209,24 @@ fun DailyStatementScreen(
                         fontWeight = FontWeight.Bold
                     )
 
-                    // View Mode Switcher
-                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    // View Mode & Bulk Tax Switcher
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier.horizontalScroll(rememberScrollState())
+                    ) {
+                        if (userProfile?.isTaxpayerEnabled == true) {
+                            FilterChip(
+                                selected = isBulkTaxMode,
+                                onClick = {
+                                    isBulkTaxMode = !isBulkTaxMode
+                                    if (!isBulkTaxMode) selectedTxIds = emptySet()
+                                    else viewMode = "LIST"
+                                },
+                                label = { Text("Tax Mark", fontSize = 11.sp) },
+                                leadingIcon = { Icon(Icons.Default.AssuredWorkload, contentDescription = null, modifier = Modifier.size(14.dp)) },
+                                modifier = Modifier.testTag("statement_bulk_tax_button")
+                            )
+                        }
                         FilterChip(
                             selected = viewMode == "LIST",
                             onClick = { viewMode = "LIST" },
@@ -206,7 +235,10 @@ fun DailyStatementScreen(
                         )
                         FilterChip(
                             selected = viewMode == "TABLE",
-                            onClick = { viewMode = "TABLE" },
+                            onClick = {
+                                viewMode = "TABLE"
+                                isBulkTaxMode = false
+                            },
                             label = { Text("Excel Sheet", fontSize = 11.sp) },
                             leadingIcon = { Icon(Icons.Default.TableChart, contentDescription = null, modifier = Modifier.size(14.dp)) }
                         )
@@ -258,6 +290,69 @@ fun DailyStatementScreen(
             }
         }
 
+        // Bulk Tax Selection Action Bar
+        if (isBulkTaxMode && viewMode == "LIST") {
+            val taggableIds = filteredTransactions
+                .filter { it.type in listOf("INCOME", "EXPENSE", "PETROL", "EXTRA_EXPENSE") }
+                .map { it.id }
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f))
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "${selectedTxIds.size} selected",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        TextButton(
+                            onClick = {
+                                selectedTxIds = if (selectedTxIds.size == taggableIds.size) emptySet() else taggableIds.toSet()
+                            },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                        ) {
+                            Text(if (selectedTxIds.size == taggableIds.size && taggableIds.isNotEmpty()) "Clear" else "Select All", fontSize = 11.sp)
+                        }
+                        if (selectedTxIds.isNotEmpty()) {
+                            OutlinedButton(
+                                onClick = {
+                                    viewModel.bulkTagTransactionsForTax(
+                                        ids = selectedTxIds.toList(),
+                                        isTaxRelated = false,
+                                        taxSectionType = "",
+                                        taxCategory = "",
+                                        taxYearId = ""
+                                    ) {
+                                        Toast.makeText(context, "Removed Tax tag from ${selectedTxIds.size} item(s)", Toast.LENGTH_SHORT).show()
+                                        selectedTxIds = emptySet()
+                                        isBulkTaxMode = false
+                                    }
+                                },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                modifier = Modifier.testTag("bulk_tax_untag_button")
+                            ) {
+                                Text("Untag", fontSize = 11.sp)
+                            }
+                            Button(
+                                onClick = { showBulkTaxDialog = true },
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                modifier = Modifier.testTag("bulk_tax_apply_button")
+                            ) {
+                                Text("Tag Tax", fontSize = 11.sp)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Content Area: List View or Excel Table View
         if (viewMode == "TABLE") {
             DailyStatementTableView(
@@ -287,9 +382,19 @@ fun DailyStatementScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(filteredTransactions, key = { it.id }) { tx ->
+                        val canSelectForTax = tx.type in listOf("INCOME", "EXPENSE", "PETROL", "EXTRA_EXPENSE")
                         StatementRecordCard(
                             tx = tx,
                             accounts = accounts,
+                            isBulkSelectMode = isBulkTaxMode && canSelectForTax,
+                            isSelected = tx.id in selectedTxIds,
+                            onToggleSelect = {
+                                selectedTxIds = if (tx.id in selectedTxIds) {
+                                    selectedTxIds - tx.id
+                                } else {
+                                    selectedTxIds + tx.id
+                                }
+                            },
                             onEdit = { onEditTransaction(tx) },
                             onDelete = { showDeleteConfirm = tx }
                         )
@@ -297,6 +402,90 @@ fun DailyStatementScreen(
                 }
             }
         }
+    }
+
+    // Bulk Tax Tagging Modal
+    if (showBulkTaxDialog && selectedTxIds.isNotEmpty()) {
+        val currentYear = PakistanTaxYearUtils.currentTaxYear()
+        val yearOptions = listOf(currentYear - 1, currentYear, currentYear + 1)
+        var bulkSection by remember { mutableStateOf(TAX_GROUP_EXPENSE) }
+        var bulkCategory by remember { mutableStateOf(PakistanTaxConstants.DEFAULT_TAX_EXPENSE_CATEGORIES.first()) }
+        var bulkYear by remember { mutableStateOf(currentYear) }
+
+        AlertDialog(
+            onDismissRequest = { showBulkTaxDialog = false },
+            title = { Text("Tag ${selectedTxIds.size} Record(s) for Tax", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Tax Section", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                    Row(
+                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf(
+                            TAX_GROUP_INCOME to "Income",
+                            TAX_GROUP_EXPENSE to "Expense",
+                            TAX_GROUP_DEDUCTION to "Deduction",
+                            TAX_GROUP_WITHHOLDING to "Withholding"
+                        ).forEach { (key, label) ->
+                            FilterChip(
+                                selected = bulkSection == key,
+                                onClick = {
+                                    bulkSection = key
+                                    bulkCategory = PakistanTaxConstants.defaultCategoriesForGroup(key).firstOrNull().orEmpty()
+                                },
+                                label = { Text(label) }
+                            )
+                        }
+                    }
+
+                    OutlinedTextField(
+                        value = bulkCategory,
+                        onValueChange = { bulkCategory = it },
+                        label = { Text("Tax Category") },
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("bulk_tax_category_input")
+                    )
+
+                    Text("Tax Year", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        yearOptions.forEach { yr ->
+                            FilterChip(
+                                selected = bulkYear == yr,
+                                onClick = { bulkYear = yr },
+                                label = { Text("TY $yr") }
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.bulkTagTransactionsForTax(
+                            ids = selectedTxIds.toList(),
+                            isTaxRelated = true,
+                            taxSectionType = bulkSection,
+                            taxCategory = bulkCategory.trim().ifBlank { "Other" },
+                            taxYearId = bulkYear.toString()
+                        ) {
+                            Toast.makeText(context, "Tagged ${selectedTxIds.size} record(s) for TY $bulkYear", Toast.LENGTH_SHORT).show()
+                            showBulkTaxDialog = false
+                            selectedTxIds = emptySet()
+                            isBulkTaxMode = false
+                        }
+                    },
+                    modifier = Modifier.testTag("bulk_tax_confirm_button")
+                ) {
+                    Text("Apply Tag")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBulkTaxDialog = false }) { Text("Cancel") }
+            }
+        )
     }
 
     // Delete confirmation dialog
@@ -334,6 +523,9 @@ fun DailyStatementScreen(
 private fun StatementRecordCard(
     tx: TransactionEntity,
     accounts: List<AccountEntity>,
+    isBulkSelectMode: Boolean = false,
+    isSelected: Boolean = false,
+    onToggleSelect: () -> Unit = {},
     onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -379,7 +571,9 @@ private fun StatementRecordCard(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onEdit() },
+            .clickable {
+                if (isBulkSelectMode) onToggleSelect() else onEdit()
+            },
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = cardBg)
     ) {
@@ -389,6 +583,14 @@ private fun StatementRecordCard(
                 .padding(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            if (isBulkSelectMode) {
+                Checkbox(
+                    checked = isSelected,
+                    onCheckedChange = { onToggleSelect() },
+                    modifier = Modifier.testTag("select_tx_tax_${tx.id}")
+                )
+            }
+
             // Icon Badge
             Box(
                 modifier = Modifier
@@ -414,11 +616,29 @@ private fun StatementRecordCard(
                 } else {
                     tx.description.ifBlank { tx.category }
                 }
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Bold
-                )
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    if (tx.isTaxRelated) {
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = EmeraldPrimaryLight.copy(alpha = 0.16f),
+                            modifier = Modifier.testTag("tx_tax_badge_${tx.id}")
+                        ) {
+                            Text(
+                                text = "TAX",
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                                fontWeight = FontWeight.Bold,
+                                color = EmeraldPrimaryLight,
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                            )
+                        }
+                    }
+                }
 
                 val dayText = tx.dayOfWeek.ifBlank { DateUtils.getDayOfWeek(tx.date) }
                 val dateWithDay = DateUtils.formatReadableDateWithDay(tx.date, dayText)

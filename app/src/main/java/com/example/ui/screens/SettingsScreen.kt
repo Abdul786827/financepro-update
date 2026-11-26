@@ -55,6 +55,8 @@ fun SettingsScreen(
 ) {
     val context = LocalContext.current
     val userProfile by viewModel.userProfile.collectAsStateWithLifecycle()
+    val taxYearCount by viewModel.taxYearCount.collectAsStateWithLifecycle()
+    val taxEntries by viewModel.taxEntries.collectAsStateWithLifecycle()
     val profileBitmap = remember(userProfile?.profileImageBase64) {
         userProfile?.profileImageBase64?.let { ImageUtils.base64ToBitmap(it) }
     }
@@ -62,6 +64,7 @@ fun SettingsScreen(
     var showEditProfileDialog by rememberSaveable { mutableStateOf(false) }
     var showChangePasswordDialog by rememberSaveable { mutableStateOf(false) }
     var showResetConfirmDialog by rememberSaveable { mutableStateOf(false) }
+    var showTaxResetConfirmDialog by rememberSaveable { mutableStateOf(false) }
     var showChangelogDialog by rememberSaveable { mutableStateOf(false) }
     var isCheckingUpdate by remember { mutableStateOf(false) }
     var updateCheckResult by remember { mutableStateOf<UpdateCheckResult?>(null) }
@@ -69,7 +72,8 @@ fun SettingsScreen(
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
-            .padding(16.dp),
+            .padding(16.dp)
+            .testTag("settings_list"),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         // User Profile Header
@@ -249,6 +253,60 @@ fun SettingsScreen(
                             modifier = Modifier.testTag("biometric_settings_switch")
                         )
                     }
+                }
+            }
+        }
+
+        // Pakistan Taxpayer Mode
+        item {
+            Text(
+                text = "Taxpayer Mode (Pakistan)",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(end = 12.dp)
+                    ) {
+                        Text(
+                            text = "I am a taxpayer / filer",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = "Show the Tax section in bottom navigation to track Pakistan tax years (1 Jul – 30 Jun), withholding taxes, wealth statements & proof documents.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = userProfile?.isTaxpayerEnabled == true,
+                        onCheckedChange = { enabled ->
+                            viewModel.setTaxpayerEnabled(enabled)
+                            Toast.makeText(
+                                context,
+                                if (enabled) "Taxpayer Mode enabled — 'Tax' added to bottom navigation" else "Taxpayer Mode hidden (your tax records remain safely saved)",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        },
+                        modifier = Modifier.testTag("taxpayer_mode_switch")
+                    )
                 }
             }
         }
@@ -829,22 +887,31 @@ fun SettingsScreen(
 
     // Reset All Data Confirm Dialog (2 modes)
     if (showResetConfirmDialog) {
+        val hasTaxData = (userProfile?.isTaxpayerEnabled == true) || taxYearCount > 0 || taxEntries.isNotEmpty()
         AlertDialog(
             onDismissRequest = { showResetConfirmDialog = false },
             title = { Text("Reset All Data?") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
-                        text = "Choose how you want to reset your ledger. Your choice only affects your active user account.",
+                        text = if (hasTaxData) {
+                            "Choose how you want to reset your ledger. Your Taxpayer Mode records stay protected unless you explicitly confirm deleting them next."
+                        } else {
+                            "Choose how you want to reset your ledger. Your choice only affects your active user account."
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
 
                     Button(
                         onClick = {
-                            viewModel.resetAllDataToZero(deleteAccounts = false) {
+                            viewModel.resetAllDataToZero(deleteAccounts = false, deleteTaxData = false) {
                                 showResetConfirmDialog = false
-                                Toast.makeText(context, "Transactions cleared; accounts reset to 0.00", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(
+                                    context,
+                                    if (hasTaxData) "Transactions cleared; accounts at 0.00 (Tax records preserved)" else "Transactions cleared; accounts reset to 0.00",
+                                    Toast.LENGTH_SHORT
+                                ).show()
                             }
                         },
                         modifier = Modifier
@@ -857,9 +924,14 @@ fun SettingsScreen(
 
                     OutlinedButton(
                         onClick = {
-                            viewModel.resetAllDataToZero(deleteAccounts = true) {
+                            if (hasTaxData) {
                                 showResetConfirmDialog = false
-                                Toast.makeText(context, "All accounts, transactions, and records deleted", Toast.LENGTH_SHORT).show()
+                                showTaxResetConfirmDialog = true
+                            } else {
+                                viewModel.resetAllDataToZero(deleteAccounts = true, deleteTaxData = false) {
+                                    showResetConfirmDialog = false
+                                    Toast.makeText(context, "All accounts, transactions, and records deleted", Toast.LENGTH_SHORT).show()
+                                }
                             }
                         },
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
@@ -875,6 +947,95 @@ fun SettingsScreen(
             confirmButton = {},
             dismissButton = {
                 TextButton(onClick = { showResetConfirmDialog = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    // Stronger Separate Confirmation Before Deleting Tax Records
+    if (showTaxResetConfirmDialog) {
+        var confirmCheckbox by remember { mutableStateOf(false) }
+        var confirmTypedText by remember { mutableStateOf("") }
+        val isPhraseValid = confirmTypedText.trim().equals("DELETE TAX", ignoreCase = true)
+
+        AlertDialog(
+            onDismissRequest = { showTaxResetConfirmDialog = false },
+            title = {
+                Text(
+                    text = "Confirm Tax Data Deletion",
+                    color = MaterialTheme.colorScheme.error,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "You have saved Pakistan Taxpayer records. You can delete your normal accounts & transactions while keeping your Tax Vault intact, OR permanently wipe everything including Tax years, encrypted CNIC/NTN, wealth statements, and attached documents.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+
+                    Button(
+                        onClick = {
+                            viewModel.resetAllDataToZero(deleteAccounts = true, deleteTaxData = false) {
+                                showTaxResetConfirmDialog = false
+                                Toast.makeText(context, "Accounts & ledger deleted (Tax records preserved)", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .defaultMinSize(minHeight = 48.dp)
+                            .testTag("reset_keep_tax_only_button")
+                    ) {
+                        Text("Delete Ledger & Accounts Only (Keep Tax Records)", maxLines = 2)
+                    }
+
+                    HorizontalDivider(thickness = 0.5.dp)
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.clickable { confirmCheckbox = !confirmCheckbox }
+                    ) {
+                        Checkbox(
+                            checked = confirmCheckbox,
+                            onCheckedChange = { confirmCheckbox = it },
+                            modifier = Modifier.testTag("confirm_delete_tax_checkbox")
+                        )
+                        Text(
+                            text = "I understand all Tax records, encrypted CNIC/NTN, and documents will be permanently erased.",
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+
+                    OutlinedTextField(
+                        value = confirmTypedText,
+                        onValueChange = { confirmTypedText = it },
+                        label = { Text("Type DELETE TAX to wipe tax data") },
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("confirm_delete_tax_input")
+                    )
+
+                    Button(
+                        onClick = {
+                            viewModel.resetAllDataToZero(deleteAccounts = true, deleteTaxData = true) {
+                                showTaxResetConfirmDialog = false
+                                Toast.makeText(context, "All accounts, ledger, and Tax records deleted", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        enabled = confirmCheckbox && isPhraseValid,
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .defaultMinSize(minHeight = 48.dp)
+                            .testTag("confirm_delete_tax_button")
+                    ) {
+                        Text("Permanently Delete Everything + Tax Data", maxLines = 2)
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showTaxResetConfirmDialog = false }) { Text("Cancel") }
             }
         )
     }

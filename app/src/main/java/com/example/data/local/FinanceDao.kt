@@ -254,6 +254,9 @@ interface FinanceDao : TransactionDao {
     @Query("UPDATE user_profile SET isBiometricEnabled = :enabled WHERE id = :id")
     suspend fun updateBiometricEnabled(id: Int, enabled: Boolean)
 
+    @Query("UPDATE user_profile SET isTaxpayerEnabled = :enabled WHERE id = :id")
+    suspend fun updateTaxpayerEnabled(id: Int, enabled: Boolean)
+
     @Query("UPDATE user_profile SET isLoggedIn = :isLoggedIn WHERE id = :id")
     suspend fun updateLoginSession(id: Int, isLoggedIn: Boolean)
 
